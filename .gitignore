@@ -1,0 +1,8 @@
+.env
+*.pem
+pgdata/
+miniodata/
+node_modules/
+__pycache__/
+.venv/
+synthetic/output/
