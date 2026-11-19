@@ -1,0 +1,38 @@
+# Development-only service stack.
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    env_file: ../.env
+    ports: ["${POSTGRES_PUBLISHED_PORT:-5434}:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7
+    ports: ["6379:6379"]
+
+  minio:
+    image: minio/minio:RELEASE.2025-10-15T17-29-55Z
+    command: server /data --console-address ":9001"
+    env_file: ../.env
+    ports: ["9000:9000", "9001:9001"]
+    volumes: [miniodata:/data]
+
+  clamav:
+    image: clamav/clamav:stable
+    ports: ["3310:3310"]
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.2
+    command: start-dev
+    env_file: ../.env
+    ports: ["8080:8080"]
+
+volumes:
+  pgdata: {}
+  miniodata: {}
