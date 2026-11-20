@@ -34,9 +34,10 @@ services:
 
   keycloak:
     image: quay.io/keycloak/keycloak:26.8.2
-    command: start-dev
+    command: start-dev --import-realm
     env_file: ../.env
     ports: ["8080:8080"]
+    volumes: ["./keycloak:/opt/keycloak/data/import:ro"]
 
 volumes:
   pgdata: {}
