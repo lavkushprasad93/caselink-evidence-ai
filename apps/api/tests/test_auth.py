@@ -48,13 +48,23 @@ class FakeDB:
     def __init__(self, member: object | None) -> None:
         self.member = member
 
-    def scalar(self, _stmt: object) -> object | None:
-        return self.member
+    def scalar(self, stmt: object) -> object | None:
+        return None if "audit_log" in str(stmt) else self.member
+
+    def execute(self, *_args: object, **_kwargs: object) -> None:
+        return None
+
+    def commit(self) -> None:
+        return None
+
+    def rollback(self) -> None:
+        return None
 
 
 @pytest.fixture
 def client() -> Iterator[TestClient]:
     app.dependency_overrides[get_key_resolver] = lambda: (lambda _token: PRIVATE.public_key())
+    use_db(FakeDB(member=None))
     yield TestClient(app)
     app.dependency_overrides.clear()
 

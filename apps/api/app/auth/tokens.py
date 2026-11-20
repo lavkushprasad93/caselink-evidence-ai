@@ -59,3 +59,16 @@ def decode_jwt(
     except jwt.PyJWTError as exc:
         raise _unauthorized() from exc
     return claims
+
+
+def try_decode(
+    creds: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
+    resolve: Annotated[KeyResolver, Depends(get_key_resolver)],
+) -> dict[str, Any] | None:
+    """Return claims for a valid bearer token, or None for anonymous/invalid requests."""
+    try:
+        return decode_jwt(creds, resolve)
+    except HTTPException as exc:
+        if exc.status_code == 401:
+            return None
+        raise

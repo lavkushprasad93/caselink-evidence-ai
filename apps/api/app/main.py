@@ -9,17 +9,23 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.auditing import audit_request
 from app.auth.deps import require_case_access
 from app.auth.tokens import decode_jwt
 from app.config import settings
 from app.db import get_db
+from app.routers.audit import router as audit_router
 from app.routers.documents import router as documents_router
 from app.scanner import ScannerUnavailable
 from app.storage import StorageUnavailable
 
 log = logging.getLogger(__name__)
 
-app = FastAPI(title="CaseLink Evidence AI API", version=settings.app_version)
+app = FastAPI(
+    title="CaseLink Evidence AI API",
+    version=settings.app_version,
+    dependencies=[Depends(audit_request)],
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -29,6 +35,7 @@ app.add_middleware(
 )
 
 app.include_router(documents_router)
+app.include_router(audit_router)
 
 
 @app.exception_handler(ScannerUnavailable)

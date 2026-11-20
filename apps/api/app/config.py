@@ -6,6 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://user:password@localhost:5434/caselink"
+    migration_database_url: str | None = None
     app_version: str = "0.1.0"
     cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
     keycloak_issuer: str = "http://localhost:8080/realms/copilot"
