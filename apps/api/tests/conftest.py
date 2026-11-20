@@ -45,3 +45,18 @@ def schema_conn(conn: Connection) -> Iterator[Connection]:
 def auth_conn(conn: Connection) -> Iterator[Connection]:
     _require_table(conn, "case_member")
     yield conn
+
+
+@pytest.fixture
+def upload_conn(conn: Connection) -> Iterator[Connection]:
+    _require_table(conn, "case_member")
+    column_count = conn.execute(text("""
+            SELECT count(*)
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'document'
+              AND column_name IN ('original_filename', 'size_bytes', 'content_type')
+            """)).scalar_one()
+    if column_count != 3:
+        pytest.skip("Run `alembic upgrade head` before testing document uploads")
+    yield conn

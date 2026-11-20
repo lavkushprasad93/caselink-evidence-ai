@@ -1,8 +1,10 @@
+import logging
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -11,15 +13,40 @@ from app.auth.deps import require_case_access
 from app.auth.tokens import decode_jwt
 from app.config import settings
 from app.db import get_db
+from app.routers.documents import router as documents_router
+from app.scanner import ScannerUnavailable
+from app.storage import StorageUnavailable
+
+log = logging.getLogger(__name__)
 
 app = FastAPI(title="CaseLink Evidence AI API", version=settings.app_version)
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
+
+app.include_router(documents_router)
+
+
+@app.exception_handler(ScannerUnavailable)
+async def scanner_unavailable(
+    request: Request,
+    exc: ScannerUnavailable,
+) -> JSONResponse:
+    log.warning("ClamAV unavailable during upload: %s", exc)
+    return JSONResponse(status_code=503, content={"detail": "Malware scanner unavailable"})
+
+
+@app.exception_handler(StorageUnavailable)
+async def storage_unavailable(
+    request: Request,
+    exc: StorageUnavailable,
+) -> JSONResponse:
+    log.warning("MinIO unavailable during upload: %s", exc)
+    return JSONResponse(status_code=503, content={"detail": "Object storage unavailable"})
 
 
 @app.get("/health")
