@@ -1,4 +1,5 @@
 import hashlib
+import itertools
 import uuid
 from collections.abc import Iterable, Iterator
 from typing import Any, BinaryIO
@@ -75,6 +76,10 @@ def env(upload_conn) -> Iterator[dict[str, Any]]:
         ),
         {"case_id": case_id},
     )
+    audit_start = upload_conn.execute(text("SELECT coalesce(max(id), 0) FROM audit_log")).scalar()
+    audit_last_hash = upload_conn.execute(
+        text("SELECT entry_hash FROM audit_log ORDER BY id DESC LIMIT 1")
+    ).scalar()
     yield {
         "client": TestClient(app),
         "conn": upload_conn,
@@ -82,6 +87,8 @@ def env(upload_conn) -> Iterator[dict[str, Any]]:
         "scanner": scanner,
         "queued": queued,
         "case_id": case_id,
+        "audit_start": audit_start,
+        "audit_last_hash": audit_last_hash,
         "headers": auth(make_token(["investigator"], sub="alice")),
     }
     app.dependency_overrides.clear()
@@ -118,6 +125,26 @@ def rows(env: dict[str, Any], sql: str, **params: Any) -> list[Any]:
     return list(env["conn"].execute(text(sql), params).all())
 
 
+def audit_actions(env: dict[str, Any]) -> list[str]:
+    return [
+        row.action
+        for row in rows(
+            env,
+            "SELECT action FROM audit_log WHERE id > :start "
+            "AND action NOT LIKE 'API\\_%' ORDER BY id",
+            start=env["audit_start"],
+        )
+    ]
+
+
+def new_audit_entries(env: dict[str, Any]) -> list[Any]:
+    return rows(
+        env,
+        "SELECT * FROM audit_log WHERE id > :start ORDER BY id",
+        start=env["audit_start"],
+    )
+
+
 def test_successful_upload(env: dict[str, Any]) -> None:
     response = upload(env)
     assert response.status_code == 201
@@ -151,7 +178,7 @@ def test_successful_upload(env: dict[str, Any]) -> None:
         sha,
         sha,
     )
-    assert rows(env, "SELECT action FROM audit_log")[0].action == "UPLOAD"
+    assert audit_actions(env) == ["UPLOAD"]
 
 
 def test_duplicate_is_rejected_but_recorded(env: dict[str, Any]) -> None:
@@ -164,8 +191,7 @@ def test_duplicate_is_rejected_but_recorded(env: dict[str, Any]) -> None:
     assert len(rows(env, "SELECT 1 FROM document")) == 1
     actions = [row.action for row in rows(env, "SELECT action FROM provenance_event ORDER BY id")]
     assert actions == ["UPLOAD", "UPLOAD_DUPLICATE_REJECTED"]
-    audit = [row.action for row in rows(env, "SELECT action FROM audit_log ORDER BY id")]
-    assert audit == ["UPLOAD", "UPLOAD_DUPLICATE_REJECTED"]
+    assert audit_actions(env) == ["UPLOAD", "UPLOAD_DUPLICATE_REJECTED"]
     assert len(env["queued"]) == 1
 
 
@@ -203,7 +229,7 @@ def test_malware_is_rejected_and_not_stored(env: dict[str, Any]) -> None:
     assert env["store"].objects == {}
     assert rows(env, "SELECT 1 FROM document") == []
     assert env["queued"] == []
-    assert rows(env, "SELECT action FROM audit_log")[0].action == "UPLOAD_REJECTED_MALWARE"
+    assert audit_actions(env) == ["UPLOAD_REJECTED_MALWARE"]
 
 
 def test_scanner_down_fails_closed(env: dict[str, Any]) -> None:
@@ -276,10 +302,11 @@ def test_unknown_case_is_404(env: dict[str, Any]) -> None:
 def test_audit_entries_form_a_hash_chain(env: dict[str, Any]) -> None:
     upload(env)
     upload(env, content=PDF + b"different", filename="second.pdf")
-    entries = rows(env, "SELECT * FROM audit_log ORDER BY id")
-    assert len(entries) == 2
-    assert entries[0].prev_hash is None
-    assert entries[1].prev_hash == entries[0].entry_hash
+    entries = new_audit_entries(env)
+    assert len(entries) == 4
+    assert entries[0].prev_hash == env["audit_last_hash"]
+    for earlier, later in itertools.pairwise(entries):
+        assert later.prev_hash == earlier.entry_hash
     for entry in entries:
         assert entry.entry_hash == compute_entry_hash(
             entry.prev_hash,
@@ -289,6 +316,20 @@ def test_audit_entries_form_a_hash_chain(env: dict[str, Any]) -> None:
             entry.ip,
             entry.ts,
         )
+
+
+def test_authenticated_refused_requests_are_audited(env: dict[str, Any]) -> None:
+    wrong_type = upload(env, b"MZ not a PDF", "bad.pdf")
+    non_member = upload(env, headers=auth(make_token(["investigator"], sub="mallory")))
+
+    assert wrong_type.status_code == 415
+    assert non_member.status_code == 404
+    entries = new_audit_entries(env)
+    assert [(row.user_id, row.action) for row in entries] == [
+        ("alice", "API_POST"),
+        ("mallory", "API_POST"),
+    ]
+    assert all(row.resource == f"/cases/{env['case_id']}/documents" for row in entries)
 
 
 def test_queue_failure_does_not_lose_the_upload(env: dict[str, Any]) -> None:

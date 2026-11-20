@@ -60,3 +60,23 @@ def upload_conn(conn: Connection) -> Iterator[Connection]:
     if column_count != 3:
         pytest.skip("Run `alembic upgrade head` before testing document uploads")
     yield conn
+
+
+@pytest.fixture
+def append_only_conn(conn: Connection) -> Iterator[Connection]:
+    _require_table(conn, "audit_log")
+    trigger_count = conn.execute(text("""
+            SELECT count(*)
+            FROM pg_trigger
+            WHERE tgrelid IN ('public.audit_log'::regclass, 'public.provenance_event'::regclass)
+              AND tgname IN (
+                'audit_log_no_update_delete',
+                'audit_log_no_truncate',
+                'provenance_event_no_update_delete',
+                'provenance_event_no_truncate'
+              )
+              AND NOT tgisinternal
+            """)).scalar_one()
+    if trigger_count != 4:
+        pytest.skip("Run `alembic upgrade head` before testing append-only protection")
+    yield conn
